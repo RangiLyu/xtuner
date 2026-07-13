@@ -1,6 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from pathlib import Path
-from typing import Literal, Self, cast
+from typing import Self, cast
 
 import torch
 import torch.distributed as dist
@@ -148,39 +148,21 @@ class Dense(BaseModel):
                     f"Unsupported layer type {config.layers_type[layer_idx]} at layer {layer_idx}. Only 'full_attention', 'sliding_attention' and 'linear_attention' are supported."
                 )
 
-            layers[str(layer_idx)] = self._build_decoder_layer(
-                config=config,
+            layers[str(layer_idx)] = DenseDecoderLayer(
+                hidden_size=config.hidden_size,
+                intermediate_size=config.intermediate_size,
+                mlp_bias=config.mlp_bias,
+                hidden_act=config.hidden_act,
+                rms_norm_eps=config.rms_norm_eps,
+                rms_norm_type=config.rms_norm_type,
                 attention_config=attention_config,
+                generate_config=config.generate_config,
+                rope_scaling_cfg=config.rope_scaling_cfg,
+                float8_cfg=config.float8_cfg,
                 layer_type=config.layers_type[layer_idx] if config.layers_type is not None else None,
                 layer_idx=layer_idx,
             )
         return layers
-
-    def _build_decoder_layer(
-        self,
-        config: TransformerConfig,
-        attention_config: MHAConfig | MLAConfig | GatedDeltaNetConfig,
-        layer_type: Literal["full_attention", "sliding_attention", "linear_attention"] | None,
-        layer_idx: int,
-    ) -> nn.Module:
-        """Build a decoder layer.
-
-        Subclasses may override to use a custom layer type.
-        """
-        return DenseDecoderLayer(
-            hidden_size=config.hidden_size,
-            intermediate_size=config.intermediate_size,
-            mlp_bias=config.mlp_bias,
-            hidden_act=config.hidden_act,
-            rms_norm_eps=config.rms_norm_eps,
-            rms_norm_type=config.rms_norm_type,
-            attention_config=attention_config,
-            generate_config=config.generate_config,
-            rope_scaling_cfg=config.rope_scaling_cfg,
-            float8_cfg=config.float8_cfg,
-            layer_type=layer_type,
-            layer_idx=layer_idx,
-        )
 
     @property
     @override

@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from torch.distributed.tensor import DTensor
 
-from xtuner.v1.ops import rms_norm, rms_norm_without_scale, zero_centered_rms_norm
+from xtuner.v1.ops import gemma4_rms_norm, rms_norm, rms_norm_without_scale, zero_centered_rms_norm
 
 
 class RMSNorm(nn.Module):
@@ -15,7 +15,7 @@ class RMSNorm(nn.Module):
         self,
         hidden_size: int,
         eps: float = 1e-6,
-        type: Literal["default", "zero_centered"] = "default",
+        type: Literal["default", "zero_centered", "gemma4"] = "default",
         with_scale: bool = True,
     ):
         """RMSNorm is equivalent to T5LayerNorm."""
@@ -28,13 +28,12 @@ class RMSNorm(nn.Module):
         self._type = type
         self.with_scale = with_scale
 
-        if not with_scale and type != "default":
-            raise ValueError("Weightless RMSNorm only supports the default weight semantics.")
-
         if type == "default":
             self.rms_norm_fn = rms_norm
         elif type == "zero_centered":
             self.rms_norm_fn = zero_centered_rms_norm
+        elif type == "gemma4":
+            self.rms_norm_fn = gemma4_rms_norm
         else:
             raise ValueError(f"Unsupported RMSNorm type: {type}")
 

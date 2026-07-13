@@ -39,7 +39,7 @@ class MHAConfig(BaseModel):
     qk_norm: bool = False
     v_norm: bool = False
     rms_norm_eps: float = 1e-06
-    rms_norm_type: Literal["default", "zero_centered"] = "default"
+    rms_norm_type: Literal["default", "zero_centered", "gemma4"] = "default"
     scaling: float | None = None
     k_eq_v: bool = False
     o_bias: Annotated[bool, Parameter(group="attention")] = False
@@ -128,7 +128,7 @@ class MultiHeadAttention(nn.Module):
         qk_norm: bool = False,
         v_norm: bool = False,
         rms_norm_eps: float = 1e-6,
-        rms_norm_type: Literal["default", "zero_centered"] = "default",
+        rms_norm_type: Literal["default", "zero_centered", "gemma4"] = "default",
         scaling: float | None = None,
         k_eq_v: bool = False,
         o_bias: bool = False,
@@ -198,7 +198,12 @@ class MultiHeadAttention(nn.Module):
             self.q_norm = RMSNorm(self.head_dim, eps=self.rms_norm_eps, type=self.rms_norm_type)
             self.k_norm = RMSNorm(self.head_dim, eps=self.rms_norm_eps, type=self.rms_norm_type)
         if self.use_v_norm:
-            self.v_norm = RMSNorm(self.head_dim, eps=self.rms_norm_eps, with_scale=False)
+            self.v_norm = RMSNorm(
+                self.head_dim,
+                eps=self.rms_norm_eps,
+                type=self.rms_norm_type,
+                with_scale=False,
+            )
 
         self.with_sink = with_sink
         if self.with_sink:

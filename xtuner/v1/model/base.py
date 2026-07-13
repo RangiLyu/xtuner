@@ -310,17 +310,9 @@ class TransformerConfig(XTunerBaseModelConfig):
 
         Returns None if rope_type is default and no FoPE is used.
         """
-        if self.rope_parameters_cfg is None:
-            return None
-
-        # Even for default rope_type, we need to return a RopeScalingConfig if
-        # partial_rotary_factor != 1.0 (e.g. Gemma4's proportional RoPE) to ensure
-        # the attention module enables partial rotary.
-        is_default_no_fope = (
+        if self.rope_parameters_cfg is None or (
             self.rope_parameters_cfg.rope_type == "default" and not self.rope_parameters_cfg.use_fope
-        )
-        has_partial_rotary = self.rope_parameters_cfg.partial_rotary_factor != 1.0
-        if is_default_no_fope and not has_partial_rotary:
+        ):
             return None
 
         # Build RopeScalingConfig from rope_parameters_cfg dynamically

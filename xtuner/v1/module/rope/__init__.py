@@ -1,3 +1,4 @@
+from .gemma4 import Gemma4TextRotaryEmbedding
 from .rope import (
     Qwen3VLTextRotaryEmbedding,
     RopeParametersConfig,
@@ -9,6 +10,7 @@ from .rope import (
 
 
 __all__ = [
+    "Gemma4TextRotaryEmbedding",
     "RopeParametersConfig",
     "RopeScalingConfig",
     "RotaryEmbedding",

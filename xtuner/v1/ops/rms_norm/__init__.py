@@ -18,6 +18,15 @@ def rms_norm_without_scale(x: torch.Tensor, epsilon: float) -> torch.Tensor:
     return output.type_as(x)
 
 
+def gemma4_rms_norm(x: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
+    """RMSNorm using Gemma 4's explicit pow formulation."""
+    output = x.float()
+    mean_squared = output.pow(2).mean(-1, keepdim=True) + epsilon
+    output = output * torch.pow(mean_squared, -0.5)
+    output = output * weight.float()
+    return output.type_as(x)
+
+
 def npu_rms_norm(x: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
     import torch_npu
 
