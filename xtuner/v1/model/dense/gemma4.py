@@ -231,7 +231,7 @@ class Gemma4DenseConfig(TransformerConfig):
             sliding_rope_parameters=dict(rope_parameters["sliding_attention"]),
             full_rope_parameters=dict(rope_parameters["full_attention"]),
             lm_loss_cfg=CELossConfig(logit_softcap=hf_config.final_logit_softcapping),
-            hf_key_mapping={r"^model\.": "model.language_model."} if is_unified_checkpoint else None,
+            hf_load_key_mapping={r"^model\.": "model.language_model."} if is_unified_checkpoint else None,
         )
 
     @property
@@ -328,4 +328,4 @@ class Gemma4Dense12BConfig(Gemma4DenseConfig):
     vocab_size_per_layer_input: int | None = 262_144
     final_logit_softcapping: float | None = 30.0
     lm_loss_cfg: CELossConfig = CELossConfig(logit_softcap=30.0)
-    hf_key_mapping: dict[str, str] | None = {r"^model\.": "model.language_model."}
+    hf_load_key_mapping: dict[str, str] | None = {r"^model\.": "model.language_model."}

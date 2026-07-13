@@ -155,9 +155,10 @@ class DeterministicDDPTestCase(DistributedTestBase):
     @staticmethod
     def xtuner_ckpt_key(model, param_name: str) -> str:
         """Resolve the HF checkpoint key for an XTuner parameter: ``to_hf_key_list`` plus the config's
-        ``hf_key_mapping`` (the remap normally applied inside ``_init_load_spec``)."""
+        load-only mapping, falling back to the bidirectional ``hf_key_mapping``."""
         key = model.to_hf_key_list(param_name)[0]
-        for pattern, repl in (model.config.hf_key_mapping or {}).items():
+        mapping = model.config.hf_load_key_mapping or model.config.hf_key_mapping or {}
+        for pattern, repl in mapping.items():
             if re.search(pattern, key):
                 return re.sub(pattern, repl, key)
         return key
@@ -168,7 +169,7 @@ class DeterministicDDPTestCase(DistributedTestBase):
 
         * The submodule's path inside ``model`` is recovered by identity match against
           ``model.named_modules()``.
-        * For XTuner the path is run through ``to_hf_key_list`` + the config's ``hf_key_mapping``;
+        * For XTuner the path is run through ``to_hf_key_list`` + the config's load mapping;
           for HF the path is *already* the state_dict prefix so it is used directly, with HF's
           ``_tied_weights_keys`` honored (e.g. ``lm_head.weight`` redirected to the canonical
           ``model.language_model.embed_tokens.weight`` when ``lm_head`` is loaded standalone).
@@ -231,4 +232,3 @@ class DeterministicDDPTestCase(DistributedTestBase):
             return full
 
         self.load_params_from_hf(submodule, loader, key_for=key_for_param)
-

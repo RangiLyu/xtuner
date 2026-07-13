@@ -143,6 +143,10 @@ class XTunerBaseModelConfig(PydanticBaseModel):
         ),
     ] = None
     hf_key_mapping: Annotated[dict[str, str] | None, "Remapping hf key based on the `to_hf_key_list`"] = None
+    hf_load_key_mapping: Annotated[
+        dict[str, str] | None,
+        "Optional load-only remapping applied to to_hf_key_list output",
+    ] = None
     dcp_ignore_frozen_params: bool = True
     lm_loss_cfg: BaseLossConfig = CELossConfig()
 
@@ -1026,6 +1030,21 @@ class BaseModel(nn.Module):
         with torch.device("cpu"):
             return get_rope_embedding(config=config)
 
+    @staticmethod
+    def _remap_hf_keys(keys: list[str], mapping: dict[str, str] | None) -> list[str]:
+        if not mapping:
+            return keys.copy()
+
+        mapped_keys: list[str] = []
+        for key in keys:
+            matches = [(pattern, match) for pattern in mapping if (match := re.search(pattern, key)) is not None]
+            if not matches:
+                mapped_keys.append(key)
+                continue
+            pattern, _ = max(matches, key=lambda item: item[1].end() - item[1].start())
+            mapped_keys.append(re.sub(pattern, mapping[pattern], key))
+        return mapped_keys
+
     def _init_load_spec(self) -> None:
         # NOTE: (yehaochen) This is a workaround to distinguish between different parameter HF loading methods
         # and model partitioning methods. Although PyTorch provides Shard, Replicate and other Placements, in
@@ -1062,27 +1081,11 @@ class BaseModel(nn.Module):
             name = self._clean_param_name(name)
             _hf_keys = self.to_hf_key_list(name)
 
-            if not self.config.hf_key_mapping:
-                hf_keys = _hf_keys
-            else:
-                hf_keys = []
-                for key in _hf_keys:
-                    max_matched_pattern = None
-                    max_match_len = -1
-                    for pattern in self.config.hf_key_mapping:
-                        if (matched := re.search(pattern, key)) is not None:
-                            matched_len = matched.end() - matched.start()
-
-                            if matched_len > max_match_len:
-                                max_match_len = matched_len
-                                max_matched_pattern = pattern
-
-                    if max_matched_pattern is None:
-                        hf_key_mapping_missing.add(key)
-                        hf_keys.append(key)
-                    else:
-                        repl = self.config.hf_key_mapping[max_matched_pattern]
-                        hf_keys.append(re.sub(max_matched_pattern, repl, key))
+            hf_keys = self._remap_hf_keys(_hf_keys, self.config.hf_key_mapping)
+            load_mapping = self.config.hf_load_key_mapping or self.config.hf_key_mapping
+            load_hf_keys = self._remap_hf_keys(_hf_keys, load_mapping)
+            if self.config.hf_key_mapping:
+                hf_key_mapping_missing.update(set(_hf_keys) & set(hf_keys))
 
             if isinstance(param, DTensor) and (placement := get_shard_placement(param.placements)) is not None:
                 dim = placement.dim
@@ -1118,6 +1121,7 @@ class BaseModel(nn.Module):
                     load_spec = LoadSpec(
                         name=name,
                         hf_keys=hf_keys,
+                        load_hf_keys=load_hf_keys,
                         shape=local_shape,
                         dim=dim,
                         load_enum=LoadEnum.SHARD,
@@ -1130,6 +1134,7 @@ class BaseModel(nn.Module):
                     load_spec = LoadSpec(
                         name=name,
                         hf_keys=hf_keys,
+                        load_hf_keys=load_hf_keys,
                         shape=local_shape,
                         dim=dim,
                         load_enum=LoadEnum.SAME,
@@ -1140,6 +1145,7 @@ class BaseModel(nn.Module):
                     load_spec = LoadSpec(
                         name=name,
                         hf_keys=hf_keys[start_hf_key_idx:end_hf_key_idx],
+                        load_hf_keys=load_hf_keys[start_hf_key_idx:end_hf_key_idx],
                         shape=local_shape,
                         dim=dim,
                         load_enum=LoadEnum.FUSED,
@@ -1150,6 +1156,7 @@ class BaseModel(nn.Module):
                     load_spec = LoadSpec(
                         name=name,
                         hf_keys=hf_keys,
+                        load_hf_keys=load_hf_keys,
                         shape=param.shape,
                         load_enum=LoadEnum.SAME,
                     )
@@ -1157,6 +1164,7 @@ class BaseModel(nn.Module):
                     load_spec = LoadSpec(
                         name=name,
                         hf_keys=hf_keys,
+                        load_hf_keys=load_hf_keys,
                         shape=param.shape,
                         load_enum=LoadEnum.FUSED,
                     )
@@ -2024,7 +2032,16 @@ class BaseModel(nn.Module):
 
     def _load_params(self, checkpoint_loader: HFCheckpointLoader, strict=True) -> tuple:
         matched_hf_keys: set[str] = set(checkpoint_loader.weight_map)
-        expected_hf_keys: set[str] = set(chain(*map(self.to_hf_key_list, self.state_dict())))
+        load_mapping = self.config.hf_load_key_mapping or self.config.hf_key_mapping
+        expected_hf_keys: set[str] = set(
+            chain.from_iterable(
+                self._remap_hf_keys(
+                    self.to_hf_key_list(self._clean_param_name(name)),
+                    load_mapping,
+                )
+                for name in self.state_dict()
+            )
+        )
         expected_keys = set(self.state_dict())
 
         if strict and matched_hf_keys != expected_hf_keys:
@@ -2109,7 +2126,7 @@ class BaseModel(nn.Module):
         self, param: torch.Tensor, load_spec: LoadSpec, checkpoint_loader: HFCheckpointLoader
     ) -> list[str]:  # return missing key
         local_tensor = param._local_tensor if isinstance(param, DTensor) else param
-        hf_key = load_spec.hf_keys[0]
+        hf_key = cast(list[str], load_spec.load_hf_keys)[0]
         if self._is_loaded_param_fp8(hf_key, checkpoint_loader):
             if not _is_float8_available():
                 raise RuntimeError(
@@ -2160,7 +2177,7 @@ class BaseModel(nn.Module):
         # 3. Calculating the `offset` and `size` of FSDP param base on the ep sharded params, and fill
         #    the FSDP param with the loaded tensor.
 
-        hf_keys = load_spec.hf_keys
+        hf_keys = cast(list[str], load_spec.load_hf_keys)
         local_tensor = param._local_tensor if isinstance(param, DTensor) else param
 
         assert load_spec.dim == self.FSDP_SHARD_DIM, "Only support FSDP and model parallel sharding at the same dim!"
@@ -2243,7 +2260,7 @@ class BaseModel(nn.Module):
         # 1. Get `hf-keys` required by sharded param (sharded by tp group, only 1 key)
         # 2. all gather the sharded param across tp group
         # 3 Fill the sharded param with the sliced gathered tensor.
-        hf_key = load_spec.hf_keys[0]
+        hf_key = cast(list[str], load_spec.load_hf_keys)[0]
         local_tensor = param._local_tensor if isinstance(param, DTensor) else param
 
         loaded_tensor = checkpoint_loader.load(hf_key)

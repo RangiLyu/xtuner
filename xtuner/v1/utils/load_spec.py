@@ -15,6 +15,7 @@ class LoadSpec(BaseModel):
     name: str
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
     hf_keys: list[str]
+    load_hf_keys: list[str] | None = None
     shape: tuple[int, ...]
     dim: int | None = None
     load_enum: LoadEnum
@@ -23,6 +24,10 @@ class LoadSpec(BaseModel):
     group: dist.ProcessGroup | None = None
 
     def model_post_init(self, _) -> None:
+        if self.load_hf_keys is None:
+            self.load_hf_keys = self.hf_keys.copy()
+        assert len(self.load_hf_keys) == len(self.hf_keys), "load_hf_keys and hf_keys must have equal cardinality"
+
         if self.load_enum == LoadEnum.SAME:
             assert len(self.hf_keys) == 1, "hf_keys should have exactly one key when load_enum is SAME"
         elif self.load_enum == LoadEnum.FUSED:
