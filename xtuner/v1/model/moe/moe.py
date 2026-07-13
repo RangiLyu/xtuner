@@ -197,7 +197,12 @@ class MoE(BaseModel):
             self.ep_mesh = None
 
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, type=config.rms_norm_type)
-        self.lm_head = LMHead(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = LMHead(
+            config.hidden_size,
+            config.vocab_size,
+            bias=False,
+            logit_softcap=getattr(config.lm_loss_cfg, "logit_softcap", None),
+        )
 
         self.layers = self.build_layers(config)
         self.rotary_emb = self.build_rotary_embedding(config)

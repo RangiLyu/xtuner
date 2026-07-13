@@ -37,8 +37,11 @@ class MHAConfig(BaseModel):
     # casual: bool = True
     qkv_bias: Annotated[bool, Parameter(group="attention")] = False
     qk_norm: bool = False
+    v_norm: bool = False
     rms_norm_eps: float = 1e-06
     rms_norm_type: Literal["default", "zero_centered"] = "default"
+    scaling: float | None = None
+    k_eq_v: bool = False
     o_bias: Annotated[bool, Parameter(group="attention")] = False
     sliding_window: Annotated[int | None, Parameter(group="attention")] = -1
     with_sink: Annotated[bool, Parameter(group="attention")] = False
@@ -123,8 +126,11 @@ class MultiHeadAttention(nn.Module):
         # casual: bool = True,
         qkv_bias: bool = False,
         qk_norm: bool = False,
+        v_norm: bool = False,
         rms_norm_eps: float = 1e-6,
         rms_norm_type: Literal["default", "zero_centered"] = "default",
+        scaling: float | None = None,
+        k_eq_v: bool = False,
         o_bias: bool = False,
         with_sink: bool = False,
         with_gate: bool = False,
@@ -143,11 +149,13 @@ class MultiHeadAttention(nn.Module):
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
         self.num_attention_groups = num_attention_heads // num_key_value_heads
-        self.scaling = self.head_dim**-0.5
+        self.scaling = self.head_dim**-0.5 if scaling is None else scaling
         self.dropout = dropout
         # self.is_causal = casual
         self.qkv_bias = qkv_bias
         self.qk_norm = qk_norm
+        self.use_v_norm = v_norm
+        self.k_eq_v = k_eq_v
         self.rms_norm_eps = rms_norm_eps
         self.rms_norm_type = rms_norm_type
         self.o_bias = o_bias
@@ -170,12 +178,15 @@ class MultiHeadAttention(nn.Module):
             bias=self.qkv_bias,
             float8_cfg=self.float8_cfg,
         )
-        self.v_proj = build_linear(
-            self.hidden_size,
-            self.num_key_value_heads * self.head_dim,
-            bias=self.qkv_bias,
-            float8_cfg=self.float8_cfg,
-        )
+        if self.k_eq_v:
+            self.v_proj = None
+        else:
+            self.v_proj = build_linear(
+                self.hidden_size,
+                self.num_key_value_heads * self.head_dim,
+                bias=self.qkv_bias,
+                float8_cfg=self.float8_cfg,
+            )
         self.o_proj = build_linear(
             self.num_attention_heads * self.head_dim,
             self.hidden_size,
@@ -186,6 +197,8 @@ class MultiHeadAttention(nn.Module):
         if self.qk_norm:
             self.q_norm = RMSNorm(self.head_dim, eps=self.rms_norm_eps, type=self.rms_norm_type)
             self.k_norm = RMSNorm(self.head_dim, eps=self.rms_norm_eps, type=self.rms_norm_type)
+        if self.use_v_norm:
+            self.v_norm = RMSNorm(self.head_dim, eps=self.rms_norm_eps, with_scale=False)
 
         self.with_sink = with_sink
         if self.with_sink:
@@ -214,12 +227,22 @@ class MultiHeadAttention(nn.Module):
         hidden_shape = (*input_shape, -1, self.head_dim)
 
         query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        key_value_states = self.k_proj(hidden_states).view(hidden_shape)
+        key_states = key_value_states
+        if self.k_eq_v:
+            value_states = key_value_states
+        else:
+            assert self.v_proj is not None
+            value_states = self.v_proj(hidden_states).view(hidden_shape)
 
         if self.qk_norm:
             query_states = self.q_norm(query_states)
             key_states = self.k_norm(key_states)
+        if self.use_v_norm:
+            value_states = self.v_norm(value_states)
+
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
 
         cos, sin = position_embeddings
         query_states, key_states = self.apply_rotary_emb(query_states, key_states, cos, sin)
@@ -275,12 +298,22 @@ class MultiHeadAttention(nn.Module):
         hidden_shape = (*input_shape, -1, self.head_dim)
 
         query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        key_value_states = self.k_proj(hidden_states).view(hidden_shape)
+        key_states = key_value_states
+        if self.k_eq_v:
+            value_states = key_value_states
+        else:
+            assert self.v_proj is not None
+            value_states = self.v_proj(hidden_states).view(hidden_shape)
 
         if self.qk_norm:
             query_states = self.q_norm(query_states)
             key_states = self.k_norm(key_states)
+        if self.use_v_norm:
+            value_states = self.v_norm(value_states)
+
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
 
         cos, sin = position_embeddings
         query_states, key_states = self.apply_rotary_emb(query_states, key_states, cos, sin)
@@ -347,12 +380,19 @@ class MultiHeadAttention(nn.Module):
         else:
             gate = None
             query_states = self.q_proj(hidden_states).view(hidden_shape)  # [b, seq,  n_head, head_dim]
-        key_states = self.k_proj(hidden_states).view(hidden_shape)
-        value_states = self.v_proj(hidden_states).view(hidden_shape)
+        key_value_states = self.k_proj(hidden_states).view(hidden_shape)
+        key_states = key_value_states
+        if self.k_eq_v:
+            value_states = key_value_states
+        else:
+            assert self.v_proj is not None
+            value_states = self.v_proj(hidden_states).view(hidden_shape)
 
         if self.qk_norm:
             query_states = self.q_norm(query_states)
             key_states = self.k_norm(key_states)
+        if self.use_v_norm:
+            value_states = self.v_norm(value_states)
 
         query_states = query_states.transpose(1, 2)  # [b, n_head, seq , head_dim]
         key_states = key_states.transpose(1, 2)

@@ -6,6 +6,22 @@ from xtuner.v1.model.moe.qwen3 import Qwen3MoE
 
 
 class TestBuildModel(TestCase):
+    def test_build_mha_with_shared_kv_and_weightless_v_norm(self):
+        attention = MHAConfig(
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=4,
+            qk_norm=True,
+            v_norm=True,
+            k_eq_v=True,
+            scaling=1.0,
+            attn_impl="eager_attention",
+        ).build(hidden_size=8, layer_type="full_attention")
+
+        self.assertIsNone(attention.v_proj)
+        self.assertNotIn("v_norm.weight", attention.state_dict())
+        self.assertEqual(attention.scaling, 1.0)
+
     def test_build_moe(self):
         from xtuner.v1.model import Qwen3MoEConfig
 
@@ -18,7 +34,7 @@ class TestBuildModel(TestCase):
             num_attention_heads=32,
             num_key_value_heads=4,
             head_dim=128,
-            qk_norm=True
+            qk_norm=True,
         )
         config = Qwen3MoEConfig(
             vocab_size=151936,

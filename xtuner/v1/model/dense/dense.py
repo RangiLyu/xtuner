@@ -60,7 +60,12 @@ class Dense(BaseModel):
         super().__init__(config)
 
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, type=config.rms_norm_type)
-        self.lm_head = LMHead(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = LMHead(
+            config.hidden_size,
+            config.vocab_size,
+            bias=False,
+            logit_softcap=getattr(config.lm_loss_cfg, "logit_softcap", None),
+        )
         self.layers = self.build_layers(config)
         self.rotary_emb = self.build_rotary_embedding(config)
         self.embed_tokens = self.build_embeddings(config)
@@ -158,7 +163,10 @@ class Dense(BaseModel):
         layer_type: Literal["full_attention", "sliding_attention", "linear_attention"] | None,
         layer_idx: int,
     ) -> nn.Module:
-        """Build a decoder layer. Subclasses may override to use a custom layer type."""
+        """Build a decoder layer.
+
+        Subclasses may override to use a custom layer type.
+        """
         return DenseDecoderLayer(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,

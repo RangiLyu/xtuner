@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 from typing_extensions import overload
 
-from xtuner.v1.loss.ce_loss import LMHeadLossContext
+from xtuner.v1.loss.ce_loss import LMHeadLossContext, apply_logit_softcap
 
 
 Loss: TypeAlias = torch.Tensor
@@ -18,6 +18,10 @@ Labels: TypeAlias = torch.Tensor
 
 
 class LMHead(nn.Linear):
+    def __init__(self, *args, logit_softcap: float | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logit_softcap = logit_softcap
+
     @overload  # type: ignore[override]
     def forward(
         self, hidden_states: HiddenStates, loss_ctx: None = None
@@ -44,6 +48,7 @@ class LMHead(nn.Linear):
             b = self.bias
         if loss_ctx is None:
             logits = F.linear(hidden_states, w, b)
+            logits = apply_logit_softcap(logits, self.logit_softcap)
             return None, (logits.float(), {})
         else:
             return loss_ctx.forward(hidden_states, w, b)

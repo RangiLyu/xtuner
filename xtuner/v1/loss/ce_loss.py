@@ -19,6 +19,12 @@ from .utils import sp_gather, sp_split
 DEVICE = get_device()
 
 
+def apply_logit_softcap(logits: torch.Tensor, softcap: float | None) -> torch.Tensor:
+    if softcap is None:
+        return logits
+    return torch.tanh(logits / softcap) * softcap
+
+
 class CELossConfig(BaseLossConfig):
     """Cross-entropy loss configuration.
 
@@ -34,6 +40,7 @@ class CELossConfig(BaseLossConfig):
 
     mode: Annotated[Literal["eager", "chunk", "liger"], Parameter(help="loss calculation mode")] = "eager"  # type: ignore
     loss_reduction: Annotated[Literal["token", "sample", "square"], Parameter(help="loss reduction mode")] = "token"
+    logit_softcap: Annotated[float | None, Parameter(help="soft-cap applied to logits before CE")] = None
 
     @property
     def loss_ctx_cls(self) -> type["CELossContext"]:
@@ -46,6 +53,7 @@ class CELossConfig(BaseLossConfig):
     def model_post_init(self, _context: Any) -> None:
         if self.mode == "liger":
             assert self.loss_reduction == "token", "Currently, cannot use liger kernel with sample or square reduction"
+            assert self.logit_softcap is None, "Liger CE does not support logit soft-capping yet."
 
     def build(
         self,
@@ -193,6 +201,7 @@ class LMHeadLossContext(BaseLossContext):
     ) -> tuple[torch.Tensor, tuple[torch.Tensor | None, dict[str, Any]]]:
         # We do linear forward here to simplify the implementation of chunk loss (saving memory).
         logits = F.linear(hidden_states, head_weight, head_bias)
+        logits = apply_logit_softcap(logits, self.loss_cfg.logit_softcap)
         logits = logits.float()  # (bs, seq_len, vocab_size)
 
         shifted_labels = loss_kwargs.shifted_labels  # (bs, seq_len)

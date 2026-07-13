@@ -11,6 +11,13 @@ def native_rms_norm(x: torch.Tensor, weight: torch.Tensor, epsilon: float) -> to
     return F.rms_norm(x, weight.shape, weight, epsilon)
 
 
+def rms_norm_without_scale(x: torch.Tensor, epsilon: float) -> torch.Tensor:
+    """RMS-normalize without a trainable scale, matching HF's weightless
+    norm."""
+    output = x.float() * torch.pow(x.float().pow(2).mean(-1, keepdim=True) + epsilon, -0.5)
+    return output.type_as(x)
+
+
 def npu_rms_norm(x: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
     import torch_npu
 
