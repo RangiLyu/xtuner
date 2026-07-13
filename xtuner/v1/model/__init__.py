@@ -19,6 +19,7 @@ from .compose.qwen3_vl import (
     Qwen3VLMoE235BA22Config,
 )
 from .dense.dense import Dense
+from .dense.gemma4 import Gemma4Dense2BConfig, Gemma4DenseConfig
 from .dense.qwen2 import Qwen2Dense7BConfig, Qwen2DenseConfig
 from .dense.qwen3 import Qwen3Dense0P6BConfig, Qwen3Dense4BConfig, Qwen3Dense8BConfig, Qwen3DenseConfig
 from .moe.deepseek_v3 import DeepSeekV3Config
@@ -39,6 +40,7 @@ model_mapping = {
     "internvl-3.5-1b-hf": InternVL3P5Dense1BConfig(),
     "internvl-3.5-30b-a3b-hf": InternVL3P5MoE30BA3Config(),
     "qwen3.5-vl-4b": Qwen3_5_VLDense4BConfig(),
+    "gemma4-2b": Gemma4Dense2BConfig(),
 }
 
 
@@ -59,6 +61,8 @@ def get_model_config_from_hf(model_path: Path):
         return Qwen2DenseConfig.from_hf(model_path)
     elif cfg.model_type == "qwen3":
         return Qwen3DenseConfig.from_hf(model_path)
+    elif cfg.model_type == "gemma4_unified_text":
+        return Gemma4DenseConfig.from_hf(model_path)
     elif cfg.model_type == "gpt_oss":
         return GptOssConfig.from_hf(model_path)
     elif cfg.model_type == "deepseek_v3":
@@ -94,6 +98,8 @@ __all__ = [
     "ZLossConfig",
     "GreedyRouterConfig",
     "Dense",
+    "Gemma4DenseConfig",
+    "Gemma4Dense2BConfig",
     "Qwen3VLMoE30BA3Config",
     "Qwen3VLDense4BConfig",
     "Qwen3VLDense8BConfig",
