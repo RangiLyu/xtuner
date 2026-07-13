@@ -28,27 +28,31 @@ numerically equivalent to the 12B reference.
 1. `get_model_config_from_hf` dispatches only `gemma4_unified_text`, while the released
    checkpoint reports `gemma4_unified`. Calling the entry point on the target repo
    currently raises `ValueError: Unsupported model type: gemma4_unified`.
-2. The exact `layer_types` list is periodic (`sliding` layers 0-4, `full` layer 5,
+
+1. The exact `layer_types` list is periodic (`sliding` layers 0-4, `full` layer 5,
    repeated every six layers). The draft converts it to a single boundary and produces
    `[full x5, sliding x43]`, so every full-attention layer is assigned the wrong profile.
-3. The two profiles have different shapes and behavior:
 
-   | Property | Sliding attention | Full attention |
-   |---|---:|---:|
-   | query heads | 16 | 16 |
-   | head dim | 256 | 512 (`global_head_dim`) |
-   | KV heads | 8 | 1 (`num_global_key_value_heads`) |
-   | K/V projection | separate | K is reused as V (`attention_k_eq_v`) |
-   | attention scale | 1.0 | 1.0 |
-   | RoPE | default, theta 10,000, full head | proportional, theta 1,000,000, first 25% |
+1. The two profiles have different shapes and behavior:
+
+   | Property        |                Sliding attention |                           Full attention |
+   | --------------- | -------------------------------: | ---------------------------------------: |
+   | query heads     |                               16 |                                       16 |
+   | head dim        |                              256 |                  512 (`global_head_dim`) |
+   | KV heads        |                                8 |         1 (`num_global_key_value_heads`) |
+   | K/V projection  |                         separate |    K is reused as V (`attention_k_eq_v`) |
+   | attention scale |                              1.0 |                                      1.0 |
+   | RoPE            | default, theta 10,000, full head | proportional, theta 1,000,000, first 25% |
 
    The draft uses one `MHAConfig` (`head_dim=256`, 8 KV heads, separate V, scale
    `head_dim**-0.5`) for all layers. Comparing meta models finds 40 parameter-shape
    mismatches and eight XTuner `v_proj` weights that do not exist in HF.
-4. HF normalizes Q, K, and V; V normalization has no trainable scale. Existing MHA only
+
+1. HF normalizes Q, K, and V; V normalization has no trainable scale. Existing MHA only
    normalizes Q/K. The full-attention K=V path also needs the same unnormalized projection
    to feed two different normalization operations.
-5. Gemma 4 computes two RoPE profiles. The draft keeps only the full profile, maps
+
+1. Gemma 4 computes two RoPE profiles. The draft keeps only the full profile, maps
    `proportional` to `default`, and passes `rope_scaling_cfg=None` into attention. This
    both loses proportional semantics and disables partial-rotary application.
 
@@ -148,9 +152,9 @@ Baseline contract:
 
 1. Load the released conditional checkpoint directly with `strict=False`, selecting
    only text-tower tensors and mapping `model.* -> model.language_model.*` on load.
-2. Export a standalone text-only HF checkpoint with `Gemma4UnifiedTextConfig`,
+1. Export a standalone text-only HF checkpoint with `Gemma4UnifiedTextConfig`,
    `architectures=["Gemma4UnifiedForCausalLM"]`, and standard `model.*` tensor names.
-3. Reload that exported checkpoint strictly and require byte-equal text tensors.
+1. Reload that exported checkpoint strictly and require byte-equal text tensors.
 
 This requires load-prefix mapping and save-prefix mapping to be directional. Prefer a
 small generalization of the load/save spec over a Gemma name check in base classes. If
@@ -168,17 +172,17 @@ Required cases:
 
 1. Config/shape test (CPU/meta): top-level dispatch, exact field mapping, exact
    `layer_types`, profile shapes, no `v_proj` on full layers, and `hf_config` round trip.
-2. Scaled embedding and both RoPE profiles: bitwise against HF.
-3. Decoder-layer parity for one sliding layer (0) and one full layer (5): materialize
+1. Scaled embedding and both RoPE profiles: bitwise against HF.
+1. Decoder-layer parity for one sliding layer (0) and one full layer (5): materialize
    only the selected layer + norm + LM head; assert layer output, soft-capped CE loss,
    and `dL/dx` are bitwise under `XTUNER_HF_IMPL`.
-4. Weight mapping/load: every expected text tensor maps to the same shape; full layers
+1. Weight mapping/load: every expected text tensor maps to the same shape; full layers
    do not request `v_proj`; released checkpoint loads with only vision/audio keys left
    unused.
-5. FSDP forward parity within the established tolerance.
-6. Text-only `save_hf` round trip: exported config loads as
+1. FSDP forward parity within the established tolerance.
+1. Text-only `save_hf` round trip: exported config loads as
    `Gemma4UnifiedForCausalLM`, and all text tensors are byte-equal.
-7. Engine regression: a short real train trace, including forward, soft-capped chunked
+1. Engine regression: a short real train trace, including forward, soft-capped chunked
    CE, backward, FSDP reduce, optimizer step, and a recorded loss trajectory.
 
 Because 12B is a large model, the mandatory bitwise guarantee is the selective
@@ -201,20 +205,20 @@ Run about 50 steps on real hardware and record the loss curve in the PR descript
 ## 6. Stacked implementation plan
 
 1. **Design/review baseline**: this document; no behavior changes.
-2. **Shared primitives**: MHA scale/K=V/V-norm support and soft-capped LM loss, each with
+1. **Shared primitives**: MHA scale/K=V/V-norm support and soft-capped LM loss, each with
    focused unit tests. Revert draft shared changes that are not needed after the final
    decomposition.
-3. **Gemma 4 text architecture**: scaled embedding, dual RoPE, decoder, exact config,
+1. **Gemma 4 text architecture**: scaled embedding, dual RoPE, decoder, exact config,
    12B size config, key mapping, registration, and dependency/version guard.
-4. **Baseline parity tests**: config/shape, both decoder profiles forward+backward,
+1. **Baseline parity tests**: config/shape, both decoder profiles forward+backward,
    checkpoint loading, and standalone save/reload.
-5. **Training delivery**: CI config, engine/loss trace, documentation, lint, and local
+1. **Training delivery**: CI config, engine/loss trace, documentation, lint, and local
    baseline commit.
-6. **Optimizations after baseline is committed**: SP, `torch.compile`, fp8, and
+1. **Optimizations after baseline is committed**: SP, `torch.compile`, fp8, and
    activation offload, each compared with the committed bf16 eager baseline. EP is not
    applicable to this dense model. Add intra-layer micro-batch coverage if the Dense
    path supports it.
-7. **Deferred compose support**: vision/audio towers, multimodal token injection, and
+1. **Deferred compose support**: vision/audio towers, multimodal token injection, and
    full `Gemma4UnifiedForConditionalGeneration` parity.
 
 ## 7. Acceptance criteria
